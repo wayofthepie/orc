@@ -1,4 +1,10 @@
 #!/bin/bash
+
+##
+# Bootstraps a node with glusterfs.
+# TODO: Should use a config management tool.
+##
+
 set -x
 
 # Should take from properties
