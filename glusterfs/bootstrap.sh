@@ -7,6 +7,8 @@
 
 set -x
 
+CURRENT_NODE=$1
+
 # Should take from properties
 GLUSTER_BLOCK_DEV="/dev/sdb"
 
@@ -35,13 +37,25 @@ function setup_storage {
 function setup_firewall {
     systemctl enable firewalld
     systemctl start firewalld
-    firewall-cmd --zone=public --add-port=24007-24008/tcp --permanent
+    
+    # Gluster and bricks
+    firewall-cmd --zone=public --add-port=24007-24010/tcp --permanent
+    
+    # Samba
+    firewall-cmd --zone=public --add-service=nfs --add-service=samba --add-service=samba-client --permanent
+    
+    # NFS and CIFS
+    firewall-cmd --zone=public --add-port=111/tcp --add-port=139/tcp --add-port=445/tcp --add-port=965/tcp --add-port=2049/tcp \
+        --add-port=38465-38469/tcp --add-port=631/tcp --add-port=111/udp --add-port=963/udp --add-port=49152-49251/tcp  --permanent
+
     firewall-cmd --reload
 }
 
-function setup_gluster {
+function setup_gluster {    
     systemctl enable glusterd
     systemctl start glusterd    
+    
+    mkdir /bricks/brick1/gv0 
 }
 
 init && setup_storage && setup_firewall && setup_gluster
