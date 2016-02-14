@@ -61,27 +61,33 @@ Vagrant.configure(2) do |config|
     (1..$num_core_cluster).each do |i|
         config.vm.define vm_name = "%s-%02d" % [$core_name_prefix, i] do |config|
             config.vm.hostname = vm_name
-        end
 
-        config.vm.provider :virtualbox do |vb|
-            vb.gui = vm_gui
-            vb.memory = vm_memory
-            vb.cpus = vm_cpus
-        end
+            config.vm.provider :virtualbox do |vb|
+                vb.gui = vm_gui
+                vb.memory = vm_memory
+                vb.cpus = vm_cpus
+            end
 
-        # Should be the subnet of the DHCP host-discovery server, outside the offer range
-        # TODO: The subnet should be read from properties so we know the DHCP subnet and this match
-        # Even though auto_config is off we still have to set an ip or vagrant will fail.
-        ip = "10.0.3.#{i.to_i+10}"
-        config.vm.network :private_network, type: "static", ip: ip, virtualbox__intnet: "NatNetwork1", auto_config: false
+            # Should be the subnet of the DHCP host-discovery server, outside the offer range
+            # TODO: The subnet should be read from properties so we know the DHCP subnet and this match
+            # Even though auto_config is off we still have to set an ip or vagrant will fail.
+            ip = "10.0.3.#{i.to_i+10}"
+            config.vm.network :private_network, type: "static", ip: ip, virtualbox__intnet: "NatNetwork1", auto_config: false
 
-        if File.exist?(CORE_CLOUD_CONFIG_PATH)
-            ccb = CloudConfigBindings.new(ip)
-            template = ERB.new File.new(CORE_CLOUD_CONFIG_PATH).read, nil, "%"
-            res = template.result(ccb.get_binding)
-            File.write("ccc", res)
-            config.vm.provision :file, :source => "ccc", :destination => "/tmp/vagrantfile-user-data"
-            config.vm.provision :shell, :inline => "cp /tmp/vagrantfile-user-data /var/lib/coreos-vagrant/", :privileged => true
+            if File.exist?(CORE_CLOUD_CONFIG_PATH)
+                ccb = CloudConfigBindings.new(ip)
+                template = ERB.new File.new(CORE_CLOUD_CONFIG_PATH).read, nil, "%"
+                res = template.result(ccb.get_binding)
+                config.vm.provision :file do |file|
+                    File.write("ccc#{i}", res)
+                    file.source      = "ccc#{i}"
+                    file.destination = '/tmp/vagrantfile-user-data'
+                    #File.delete("/var/tmp/ccc")
+                end
+
+           #     config.vm.provision :file, :source => "ccc", :destination => "/tmp/vagrantfile-user-data"
+                config.vm.provision :shell, :inline => "cp /tmp/vagrantfile-user-data /var/lib/coreos-vagrant/", :privileged => true
+            end
         end
     end
 
