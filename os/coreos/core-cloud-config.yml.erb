@@ -7,11 +7,11 @@ coreos:
     initial-advertise-peer-urls: http://<%=@ip%>:2380
     listen-client-urls: http://0.0.0.0:2379,http://0.0.0.0:4001
     listen-peer-urls: http://<%=@ip%>:2380,http://<%=@ip%>:7001
-    discovery: https://discovery.etcd.io/8c18180f0548ff6f73105c657e5f91f9
+    discovery: https://discovery.etcd.io/bcbd36195c78693d93f7ad3eb2a2aad6
   fleet:
-    public-ip: "$public_ipv4"
+    public-ip: "<%=@ip%>"
   flannel:
-    interface: "$public_ipv4"
+    interface: "<%=@ip%>"
   units:
   - name: etcd2.service
     command: start
