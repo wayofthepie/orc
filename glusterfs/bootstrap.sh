@@ -8,6 +8,9 @@
 set -x
 
 CURRENT_NODE=$1
+# TODO: Both of these should be in global config...
+DOMAIN="orc.com"
+NAMESERVER="10.0.3.2"
 
 # Should take from properties
 GLUSTER_BLOCK_DEV="/dev/sdb"
@@ -34,6 +37,11 @@ function setup_storage {
     cat /etc/fstab
 }
 
+function setup_dns {
+    echo "search ${DOMAIN}" > /etc/resolv.conf
+    echo "nameserver ${NAMESERVER}" >> /etc/resolv.conf
+}
+
 function setup_firewall {
     systemctl enable firewalld
     systemctl start firewalld
@@ -58,5 +66,5 @@ function setup_gluster {
     mkdir /bricks/brick1/gv0 
 }
 
-init && setup_storage && setup_firewall && setup_gluster
+init && setup_storage && setup_dns && setup_firewall && setup_gluster
 

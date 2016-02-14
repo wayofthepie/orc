@@ -25,6 +25,8 @@ Vagrant.configure(2) do |config|
     servers.each do |machine|
         #config.vm.boot_timeout = 1000
         config.vm.define machine[:hostname] do |node|
+           
+           
             node.landrush.enabled = true
             node.vm.box = "centos/7"
             node.vm.provider "virtualbox" do |vb|
@@ -39,11 +41,12 @@ Vagrant.configure(2) do |config|
                 end
                 vb.customize ['storageattach', :id, '--storagectl', 'IDE Controller', 
                     '--port', 0, '--device', 1, '--type', 'hdd', '--medium', second_disk]
-
+                # Turn off dns for default vagrant NAT network 
+                vb.auto_nat_dns_proxy = false
             end
-            node.vm.provision "shell", path: "bootstrap.sh"
             node.vm.hostname = machine[:hostname]
-            node.vm.network "private_network", type: "dhcp", name: "vboxnet0", adapter: 2
+            node.vm.network "private_network", type: "dhcp", name: "vboxnet0", virtualbox__intnet: "NatNetwork1"
+            node.vm.provision "shell", path: "bootstrap.sh"
         end
     end
 end
