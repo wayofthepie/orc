@@ -7,7 +7,7 @@ coreos:
     initial-advertise-peer-urls: http://$private_ipv4:2380
     listen-client-urls: http://0.0.0.0:2379,http://0.0.0.0:4001
     listen-peer-urls: http://$private_ipv4:2380,http://$private_ipv4:7001
-    discovery: https://discovery.etcd.io/8a03384b6dc5d7805f2828b353a69177
+    discovery: https://discovery.etcd.io/3f06d6bae4d6ae66f9bb19655652ef52
   fleet:
     public-ip: "$public_ipv4"
   flannel:
@@ -29,7 +29,7 @@ coreos:
     enable: true
     content: |
       [Unit]
-      Description=Docker Socket for the API
+      Description=Docker Socket for the API test
 
       [Socket]
       ListenStream=2375
@@ -38,3 +38,24 @@ coreos:
 
       [Install]
       WantedBy=sockets.target
+  # See https://coreos.com/os/docs/latest/network-config-with-networkd.html#networkd-and-dhcp-behavior
+  - name: systemd-networkd.service
+    command: stop
+  - name: 00-eth1.network
+    runtime: true
+    content: |
+      [Match]
+      Name=eth1
+
+      [Network]
+      Address=<%=@ip%>/24
+      Gateway=10.0.3.2
+  - name: down-interfaces.service
+    command: start
+    content: |
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/bin/ip link set eth1 down
+      ExecStart=/usr/bin/ip addr flush dev eth1
+  - name: systemd-networkd.service
+    command: start

@@ -1,36 +1,55 @@
-# Size of the CoreOS cluster created by Vagrant
-$num_instances=1
+
+class CloudConfigBindings
+       def initialize(ip)
+           @ip = ip
+       end
+
+       def get_binding
+           return binding()
+       end
+end
+
+def update_disco_url(cloud_config_path, disco_url)
+    if File.exists?(cloud_config_path) && ARGV[0].eql?('up')
+      require 'open-uri'
+      require 'yaml'
+
+      token = open(disco_url).read
+
+      data = YAML.load(IO.readlines(cloud_config_path)[1..-1].join)
+
+      if data.key? 'coreos' and data['coreos'].key? 'etcd'
+        data['coreos']['etcd']['discovery'] = token
+      end
+
+      if data.key? 'coreos' and data['coreos'].key? 'etcd2'
+        data['coreos']['etcd2']['discovery'] = token
+      end
+
+      # Fix for YAML.load() converting reboot-strategy from 'off' to `false`
+      if data.key? 'coreos' and data['coreos'].key? 'update' and data['coreos']['update'].key? 'reboot-strategy'
+        if data['coreos']['update']['reboot-strategy'] == false
+          data['coreos']['update']['reboot-strategy'] = 'off'
+        end
+      end
+
+      yaml = YAML.dump(data)
+      File.open(cloud_config_path, 'w') { |file| file.write("#cloud-config\n\n#{yaml}") }
+    end
+end
+
+
+# Size of the central CoreOS cluster created by Vagrant
+$num_core_cluster=1
+
+# Size of the CoreOS worker cluster
+$num_worker_cluster=0
 
 # Used to fetch a new discovery token for a cluster of size $num_instances
-$new_discovery_url="https://discovery.etcd.io/new?size=#{$num_instances}"
+$new_discovery_url="https://discovery.etcd.io/new?size=#{$num_core_cluster + $num_worker_cluster}"
 
-# Automatically replace the discovery token on 'vagrant up'
-
-if File.exists?('user-data') && ARGV[0].eql?('up')
-  require 'open-uri'
-  require 'yaml'
-
-  token = open($new_discovery_url).read
-
-  data = YAML.load(IO.readlines('user-data')[1..-1].join)
-
-  if data.key? 'coreos' and data['coreos'].key? 'etcd'
-    data['coreos']['etcd']['discovery'] = token
-  end
-
-  if data.key? 'coreos' and data['coreos'].key? 'etcd2'
-    data['coreos']['etcd2']['discovery'] = token
-  end
-
-  # Fix for YAML.load() converting reboot-strategy from 'off' to `false`
-  if data.key? 'coreos' and data['coreos'].key? 'update' and data['coreos']['update'].key? 'reboot-strategy'
-    if data['coreos']['update']['reboot-strategy'] == false
-      data['coreos']['update']['reboot-strategy'] = 'off'
-    end
-  end
-
-  yaml = YAML.dump(data)
-  File.open('user-data', 'w') { |file| file.write("#cloud-config\n\n#{yaml}") }
+["core-cloud-config.yml", "worker-cloud-config-yaml"].each do |cc|
+    update_disco_url cc, $new_discovery_url
 end
 
 #
@@ -40,10 +59,8 @@ end
 # uncomment the necessary lines, leaving the $, and replace everything
 # after the equals sign..
 
-# Change basename of the VM
-# The default value is "core", which results in VMs named starting with
-# "core-01" through to "core-${num_instances}".
-#$instance_name_prefix="core"
+$core_name_prefix="core"
+$worker_name_prefix="work"
 
 # Change the version of CoreOS to be installed
 # To deploy a specific version, simply set $image_version accordingly.
