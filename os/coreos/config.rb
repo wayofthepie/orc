@@ -40,7 +40,7 @@ end
 
 
 # Size of the central CoreOS cluster created by Vagrant
-$num_core_cluster=1
+$num_core_cluster=3
 
 # Size of the CoreOS worker cluster
 $num_worker_cluster=0
@@ -48,7 +48,7 @@ $num_worker_cluster=0
 # Used to fetch a new discovery token for a cluster of size $num_instances
 $new_discovery_url="https://discovery.etcd.io/new?size=#{$num_core_cluster + $num_worker_cluster}"
 
-["core-cloud-config.yml", "worker-cloud-config-yaml"].each do |cc|
+["core-cloud-config.yml.erb", "worker-cloud-config.yml"].each do |cc|
     update_disco_url cc, $new_discovery_url
 end
 
