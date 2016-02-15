@@ -7,7 +7,7 @@ coreos:
     initial-advertise-peer-urls: http://<%=@ip%>:2380
     listen-client-urls: http://0.0.0.0:2379,http://0.0.0.0:4001
     listen-peer-urls: http://<%=@ip%>:2380,http://<%=@ip%>:7001
-    discovery: https://discovery.etcd.io/bcbd36195c78693d93f7ad3eb2a2aad6
+    discovery: <%=@disco_url%>
   fleet:
     public-ip: "<%=@ip%>"
   flannel:
@@ -17,27 +17,6 @@ coreos:
     command: start
   - name: fleet.service
     command: start
-  - name: flanneld.service
-    drop-ins:
-    - name: 50-network-config.conf
-      content: |
-        [Service]
-        ExecStartPre=/usr/bin/etcdctl set /coreos.com/network/config '{ "Network": "10.1.0.0/16" }'
-    command: start
-  - name: docker-tcp.socket
-    command: start
-    enable: true
-    content: |
-      [Unit]
-      Description=Docker Socket for the API test
-
-      [Socket]
-      ListenStream=2375
-      Service=docker.service
-      BindIPv6Only=both
-
-      [Install]
-      WantedBy=sockets.target
   - name: systemd-networkd.service
     command: stop
   - name: 00-eth1.network
@@ -57,4 +36,21 @@ coreos:
       ExecStart=/usr/bin/ip link set eth1 down
       ExecStart=/usr/bin/ip addr flush dev eth1
   - name: systemd-networkd.service
+    command: start
+  - name: flanneld.service
+    drop-ins:
+    - name: 50-network-config.conf
+      content: |
+        [Service]
+        ExecStartPre=/usr/bin/etcdctl set /coreos.com/network/config '{ "Network": "10.1.0.0/16" }'
+      command: start
+  - name: redis.service
+    content: |
+      [Unit]
+      Requires=flanneld.service
+      After=flanneld.service
+
+      [Service]
+      ExecStart=/usr/bin/docker run redis
+      Restart=always
     command: start
