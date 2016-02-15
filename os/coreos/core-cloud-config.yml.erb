@@ -10,8 +10,9 @@ coreos:
     discovery: <%=@disco_url%>
   fleet:
     public-ip: "<%=@ip%>"
-  flannel:
-    interface: "<%=@ip%>"
+    metadata: "role=services"
+#  flannel:
+#    interface: "<%=@ip%>"
   units:
   - name: etcd2.service
     command: start
@@ -54,3 +55,10 @@ coreos:
       ExecStart=/usr/bin/docker run redis
       Restart=always
     command: start
+  write_files:
+    - path: "/run/systemd/resolve/resolv.conf"
+      permissions: "0644"
+      owner: "root"
+      content: |
+        nameserver 10.0.3.2
+

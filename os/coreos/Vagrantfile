@@ -7,7 +7,7 @@ require "erb"
 # https://github.com/coreos/coreos-vagrant/blob/master/Vagrantfile
 
 CORE_CLOUD_CONFIG_PATH = File.join(File.dirname(__FILE__), "core-cloud-config.yml.erb")
-WORK_CLOUD_CONFIG_PATH = File.join(File.dirname(__FILE__), "work-cloud-config.yml")
+WORK_CLOUD_CONFIG_PATH = File.join(File.dirname(__FILE__), "work-cloud-config.yml.erb")
 CONFIG = File.join(File.dirname(__FILE__), "config.rb")
 
 # Defaults for config options defined in CONFIG
@@ -91,23 +91,35 @@ Vagrant.configure(2) do |config|
     (1..$num_work_cluster).each do |i|
         config.vm.define vm_name = "%s-%02d" % [$worker_name_prefix, i] do |config|
             config.vm.hostname = vm_name
-        end
 
-        config.vm.provider :virtualbox do |vb|
-            vb.gui = vm_gui
-            vb.memory = vm_memory
-            vb.cpus = vm_cpus
-        end
+            config.vm.provider :virtualbox do |vb|
+                vb.gui = vm_gui
+                vb.memory = vm_memory
+                vb.cpus = vm_cpus
+            end
 
-        # Should be the subnet of the DHCP host-discovery server, outside the offer range
-        # TODO: The subnet should be read from properties so we know the DHCP subnet and this match
-        #ip = "10.0.3.#{i+10}"
- #       config.vm.network :private_network, virtualbox__intnet: "NatNetwork1", type: "dhcp"
+            # Workers use DHCP, but vagrant enforces setting an IP on an interface at config time
+            # so set an IP in the DHCP offer range to avoid conflicts with the static IP's for the
+            # core cluster while the workes are starting.
+            ip = "10.0.3.#{i.to_i+100}"
+            config.vm.network :private_network,  ip: ip, virtualbox__intnet: "NatNetwork1", auto_config: false
 
-        if File.exist?(WORK_CLOUD_CONFIG_PATH)
-            config.vm.provision :file, :source => "#{WORK_CLOUD_CONFIG_PATH}", :destination => "/tmp/vagrantfile-user-data"
-            config.vm.provision :shell, :inline => "mv /tmp/vagrantfile-user-data /var/lib/coreos-vagrant/", :privileged => true
+            if File.exist?(WORK_CLOUD_CONFIG_PATH)
+                ccb = CloudConfigBindings.new(ip, $new_disco_url, vm_name + ".orc.com")
+                template = ERB.new File.new(WORK_CLOUD_CONFIG_PATH).read, nil, "%"
+                res = template.result(ccb.get_binding)
+                config.vm.provision :file do |file|
+                    File.write("wcc#{i}", res)
+                    file.source      = "wcc#{i}"
+                    file.destination = '/tmp/vagrantfile-user-data'
+                end
+                config.vm.provision :shell, :inline => "cp /tmp/vagrantfile-user-data /var/lib/coreos-vagrant/", :privileged => true
+            end
+
+#            if File.exist?(WORK_CLOUD_CONFIG_PATH)
+#                config.vm.provision :file, :source => "#{WORK_CLOUD_CONFIG_PATH}", :destination => "/tmp/vagrantfile-user-data"
+#                config.vm.provision :shell, :inline => "mv /tmp/vagrantfile-user-data /var/lib/coreos-vagrant/", :privileged => true
+#            end
         end
     end
-
 end
