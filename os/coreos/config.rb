@@ -24,8 +24,8 @@ end
 $num_core_cluster=2
 
 # Size of the CoreOS worker cluster
-$num_work_cluster=2
+$num_work_cluster=3
 $core_name_prefix="core"
 $worker_name_prefix="work"
-$new_disco_url = get_new_token($num_core_cluster, $num_work_cluster)
+$new_disco_url = get_new_token($num_core_cluster)
 

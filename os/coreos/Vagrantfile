@@ -2,6 +2,7 @@
 # vi: set ft=ruby :
 
 require "erb"
+require "fileutils"
 
 # Hacked together from
 # https://github.com/coreos/coreos-vagrant/blob/master/Vagrantfile
@@ -40,6 +41,43 @@ def vm_cpus
       $vb_cpus.nil? ? $vm_cpus : $vb_cpus
 end
 
+class WorkDirectory
+
+    def initialize
+        @dir = __dir__ + "/work"
+    end
+
+    def create
+        ii=FileUtils.mkdir_p(@dir)
+        puts(ii)
+    end
+
+    def get
+       @dir
+    end
+
+    def destroy
+        FileUtils.rm_rf(@dir)
+    end
+end
+
+def create_config_and_upload(config, template, conf_file, ip, new_disco_url)
+    if File.exist?(template)
+        ccb = CloudConfigBindings.new(ip, new_disco_url)
+        template = ERB.new File.new(template).read, nil, "%"
+        res = template.result(ccb.get_binding)
+        config.vm.provision :file do |file|
+            File.write(conf_file, res)
+            file.source      = conf_file
+            file.destination = '/tmp/vagrantfile-user-data'
+        end
+        config.vm.provision :shell, :inline => "cp /tmp/vagrantfile-user-data /var/lib/coreos-vagrant/", :privileged => true
+    end
+end
+
+
+wd = WorkDirectory.new
+
 # All Vagrant configuration is done below. The "2" in Vagrant.configure
 # configures the configuration version (we support older styles for
 # backwards compatibility). Please don't change it unless you know what
@@ -58,8 +96,16 @@ Vagrant.configure(2) do |config|
         v.functional_vboxsf     = false
     end
 
+    config.trigger.before :up do
+      FileUtils.mkdir_p(".work/")
+    end
+
     (1..$num_core_cluster).each do |i|
         config.vm.define vm_name = "%s-%02d" % [$core_name_prefix, i] do |config|
+#            config.trigger.after :ALL do
+#                wd.destroy
+#            end
+#
             config.vm.hostname = vm_name
 
             config.vm.provider :virtualbox do |vb|
@@ -73,18 +119,8 @@ Vagrant.configure(2) do |config|
             # Even though auto_config is off we still have to set an ip or vagrant will fail.
             ip = "10.0.3.#{i.to_i+10}"
             config.vm.network :private_network, type: "static", ip: ip, virtualbox__intnet: "NatNetwork1", auto_config: false
+            create_config_and_upload(config, CORE_CLOUD_CONFIG_PATH, ".work/" + "/ccc#{i}", ip, $new_disco_url)
 
-            if File.exist?(CORE_CLOUD_CONFIG_PATH)
-                ccb = CloudConfigBindings.new(ip, $new_disco_url)
-                template = ERB.new File.new(CORE_CLOUD_CONFIG_PATH).read, nil, "%"
-                res = template.result(ccb.get_binding)
-                config.vm.provision :file do |file|
-                    File.write("ccc#{i}", res)
-                    file.source      = "ccc#{i}"
-                    file.destination = '/tmp/vagrantfile-user-data'
-                end
-                config.vm.provision :shell, :inline => "cp /tmp/vagrantfile-user-data /var/lib/coreos-vagrant/", :privileged => true
-            end
         end
     end
 
@@ -115,7 +151,7 @@ Vagrant.configure(2) do |config|
                 end
                 config.vm.provision :shell, :inline => "cp /tmp/vagrantfile-user-data /var/lib/coreos-vagrant/", :privileged => true
             end
-
+#
 #            if File.exist?(WORK_CLOUD_CONFIG_PATH)
 #                config.vm.provision :file, :source => "#{WORK_CLOUD_CONFIG_PATH}", :destination => "/tmp/vagrantfile-user-data"
 #                config.vm.provision :shell, :inline => "mv /tmp/vagrantfile-user-data /var/lib/coreos-vagrant/", :privileged => true
@@ -123,3 +159,4 @@ Vagrant.configure(2) do |config|
         end
     end
 end
+
