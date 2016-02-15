@@ -32,6 +32,9 @@ function forwarding_rules {
     firewall-cmd --direct --add-rule ipv4 filter FORWARD 0 -i eth1 -o eth0 -j ACCEPT
     firewall-cmd --direct --add-rule ipv4 filter FORWARD 0 -i eth0 -o eth1 -m state --state RELATED,ESTABLISHED -j ACCEPT
     firewall-cmd --reload
+
+    # TODO : Lookup why TCP Segmentation Offloading causes the internal network to be extremely slow.
+    ethtool -K eth1 tso off
 }
 
 setup_dnsmasq && setup_firewall && fwall_port_rules && forwarding_rules
