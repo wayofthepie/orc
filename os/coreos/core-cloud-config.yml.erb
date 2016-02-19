@@ -11,8 +11,8 @@ coreos:
   fleet:
     public-ip: "<%=@ip%>"
     metadata: "role=services"
-#  flannel:
-#    interface: "<%=@ip%>"
+  flannel:
+    interface: "<%=@ip%>"
   units:
   - name: etcd2.service
     command: start

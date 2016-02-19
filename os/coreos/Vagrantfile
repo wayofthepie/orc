@@ -25,9 +25,9 @@ $work_dir="."
 
 
 CORE_SERVICES_CLOUD_CONFIG_PATH = File.join(File.dirname(__FILE__), "core-cloud-config.yml.erb")
-KUBE_MASTER_CLOUD_CONFIG_PATH = File.join(File.dirname(__FILE__), "kube-worker-cloud-config.yml.erb")
-KUBE_WORKER_CLOUD_CONFIG_PATH = File.join(File.dirname(__FILE__), "kube-master-cloud-config.yml.erb")
-CONFIG = File.join(File.dirname(__FILE__), "config.rb")
+KUBE_MASTER_CLOUD_CONFIG_PATH = File.join(File.dirname(__FILE__), "kube-master-cloud-config.yml.erb")
+KUBE_WORKER_CLOUD_CONFIG_PATH = File.join(File.dirname(__FILE__), "kube-worker-cloud-config.yml.erb")
+CONFIG = File.join(File.dirname(__FILE__), "config/config.rb")
 
 if File.exist?(CONFIG)
     require CONFIG
@@ -50,7 +50,9 @@ rand = Random.new(1)
 
 def build_config_and_upload(config, template, bindings_spec)
     # Crazy lengths just to get temp files to work....
-    conf_file="cloud-config#{rand(10)}"
+    num = rand(10000)
+    puts num
+    conf_file="cloud-config#{num}"
     if File.exist?(template)
         erb_template = ERB.new File.new(template).read, nil, "%"
         actual = erb_template.result(bindings_spec.get_binding)
@@ -64,6 +66,16 @@ def build_config_and_upload(config, template, bindings_spec)
         config.vm.provision :shell, :inline => "cp /tmp/vagrantfile-user-data /var/lib/coreos-vagrant/", :privileged => true
     end
 end
+
+def upload_file(config,src,dst)
+    config.vm.provision :file do |file|
+        file.source      = src
+        file.destination = dst
+    end
+end
+
+
+
 
 # All Vagrant configuration is done below. The "2" in Vagrant.configure
 # configures the configuration version (we support older styles for
@@ -86,9 +98,7 @@ Vagrant.configure(2) do |config|
     # Initialize the core cluster
     (1..CoreServicesNodeConfig::NUM_NODES).each do |i|
         node_conf = CoreServicesNodeConfig.new
-
         node_conf.ip = "10.0.3.#{i.to_i+10}"
-
         config.vm.define vm_name = "%s-%02d" % [node_conf.name_prefix, i] do |config|
 
             config.vm.hostname = vm_name
@@ -97,8 +107,6 @@ Vagrant.configure(2) do |config|
                 vb.memory = vm_memory
                 vb.cpus = vm_cpus
             end
-            puts i
-            puts node_conf.ip
             # Should be the subnet of the DHCP host-discovery server, outside the offer range
             # TODO: The subnet should be read from properties so we know the DHCP subnet and this match
             # Even though auto_config is off we still have to set an ip or vagrant will fail.
@@ -106,45 +114,65 @@ Vagrant.configure(2) do |config|
             build_config_and_upload(config, CORE_SERVICES_CLOUD_CONFIG_PATH, node_conf)
         end
     end
-#    master_node_conf = WorkerNodeConfig.new
-#    # Initialize the kube masters
-#    (1..).each do |i|
-#        config.vm.define vm_name = "%s-%02d" % [$worker_name_prefix, i] do |config|
-#
-#            ip = "10.0.3.#{i.to_i+100}"
-#            config.vm.hostname = vm_name
-#            config.vm.provider :virtualbox do |vb|
-#                vb.gui = vm_gui
-#                vb.memory = vm_memory
-#                vb.cpus = vm_cpus
-#            end
-#            # Workers use DHCP, but vagrant enforces setting an IP on an interface at config time
-#            # so set an IP in the DHCP offer range to avoid conflicts with the static IP's for the
-#            # core cluster while the workes are starting
-#            config.vm.network :private_network,  ip: ip, virtualbox__intnet: "NatNetwork1", auto_config: false
-#            build_config_and_upload(config, KUBE_MASTER_CLOUD_CONFIG_PATH, node_conf)
-#       end
-#    end
-#
-#    # Initialize the kube workers
-#    (1..$num_core_cluster).each do |i|
-#        config.vm.define vm_name = "%s-%02d" % [$core_name_prefix, i] do |config|
-#
-#            ip = "10.0.3.#{i.to_i+100}"
-#            config.vm.hostname = vm_name
-#            config.vm.provider :virtualbox do |vb|
-#                vb.gui = vm_gui
-#                vb.memory = vm_memory
-#                vb.cpus = vm_cpus
-#
-#            end
-#
-#            # Should be the subnet of the DHCP host-discovery server, outside the offer range
-#            # TODO: The subnet should be read from properties so we know the DHCP subnet and this match
-#            # Even though auto_config is off we still have to set an ip or vagrant will fail.
-#            config.vm.network :private_network, type: "static", ip: ip, virtualbox__intnet: "NatNetwork1", auto_config: false
-#            build_config_and_upload(config, KUBE_WORKER_CLOUD_CONFIG_PATH,  node_conf)
-#        end
-#    end
+
+
+    # Initialize the kube masters
+    (1..KubeMasterNodeConfig::NUM_NODES).each do |i|
+        master_node_conf = KubeMasterNodeConfig.new
+        config.vm.define vm_name = "%s-%02d" % [master_node_conf.name_prefix, i] do |config|
+
+            ip = "10.0.3.#{i.to_i+100}"
+
+            config.vm.hostname = vm_name
+
+            master_node_conf.hostname = vm_name + ".orc.com"
+
+            config.vm.provider :virtualbox do |vb|
+                vb.gui = vm_gui
+                vb.memory = vm_memory
+                vb.cpus = vm_cpus
+            end
+            config.vm.provision :shell do |s|
+                s.inline = "mkdir -p /etc/kubernetes/ssl/"
+            end
+
+            upload_file(config, File.join(File.dirname(__FILE__), "tls/ca.pem"),'/tmp/ca.pem')
+            upload_file(config, File.join(File.dirname(__FILE__), "tls/apiserver.pem"),'/tmp/apiserver.pem')
+            upload_file(config, File.join(File.dirname(__FILE__), "tls/apiserver-key.pem"),'/tmp/apiserver-key.pem')
+
+            config.vm.provision :shell do |s|
+               s.inline = "cp /tmp/*.pem /etc/kubernetes/ssl/ && chmod 600 /etc/kubernetes/ssl/*-key.pem && chown root:root /etc/kubernetes/ssl/*-key.pem"
+            end
+
+
+            # Workers use DHCP, but vagrant enforces setting an IP on an interface at config time
+            # so set an IP in the DHCP offer range to avoid conflicts with the static IP's for the
+            # core cluster while the workes are starting
+            config.vm.network :private_network,  ip: ip, virtualbox__intnet: "NatNetwork1", auto_config: false
+            build_config_and_upload(config, KUBE_MASTER_CLOUD_CONFIG_PATH, master_node_conf)
+       end
+    end
+
+    # Initialize the kube workers
+    (1..KubeWorkerNodeConfig::NUM_NODES).each do |i|
+        worker_node_conf = KubeWorkerNodeConfig.new
+        config.vm.define vm_name = "%s-%02d" % [worker_node_conf.name_prefix, i] do |config|
+
+            ip = "10.0.3.#{i.to_i+100}"
+            config.vm.hostname = vm_name
+            config.vm.provider :virtualbox do |vb|
+                vb.gui = vm_gui
+                vb.memory = vm_memory
+                vb.cpus = vm_cpus
+
+            end
+
+            # Should be the subnet of the DHCP host-discovery server, outside the offer range
+            # TODO: The subnet should be read from properties so we know the DHCP subnet and this match
+            # Even though auto_config is off we still have to set an ip or vagrant will fail.
+            config.vm.network :private_network, type: "static", ip: ip, virtualbox__intnet: "NatNetwork1", auto_config: false
+            build_config_and_upload(config, KUBE_WORKER_CLOUD_CONFIG_PATH,  worker_node_conf)
+        end
+    end
 end
 
