@@ -222,6 +222,17 @@ coreos:
   locksmith:
     endpoint: "http://localhost:2379"
   units:
+    - name: systemd-networkd.service
+      command: stop
+    - name: 00-eth0.network
+      runtime: true
+      content: |
+        [Match]
+        Name=eth0
+
+        [Network]
+        Gateway=10.0.3.2
+        DNS=10.0.3.2
     - name: 00-eth1.network
       runtime: true
       content: |
@@ -232,8 +243,6 @@ coreos:
         DHCP=yes
         DNS=10.0.3.2
         Gateway=10.0.3.2
-    - name: systemd-networkd.service
-      command: stop
     - name: systemd-networkd.service
       command: start
     - name: get-ip-for-flannel.service
@@ -297,4 +306,15 @@ coreos:
         [Install]
         WantedBy=multi-user.target
       command: start
+    - name: register-namespace.service
+       command: start
+      content: |
+        [Unit]
+        Description=Add the kube-system namespace.
+
+        [Service]
+        Type=oneshot
+        User=root
+        ExecStart=/bin/bash -c "curl --retry=10 -XPOST -d'{\"apiVersion\":\"v1\",\"kind\":\"Namespace\",\"metadata\":{\"name\":\"kube-system\"}}' \"http://127.0.0.1:8080/api/v1/namespaces\""
+
 

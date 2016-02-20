@@ -1,5 +1,10 @@
 #cloud-config
 write_files:
+  - path: "/run/systemd/resolve/resolv.conf"
+    permissions: "0644"
+    owner: "root"
+    content: |
+      nameserver 10.0.3.2
   - path: "/etc/kubernetes/manifests/kube-proxy.yaml"
     permissions: 644
     owner: root
@@ -86,6 +91,17 @@ coreos:
   locksmith:
     endpoint: "http://localhost:2379"
   units:
+    - name: systemd-networkd.service
+      command: stop
+    - name: 00-eth0.network
+      runtime: true
+      content: |
+        [Match]
+        Name=eth0
+
+        [Network]
+        Gateway=10.0.3.2
+        DNS=10.0.3.2
     - name: 00-eth1.network
       runtime: true
       content: |
@@ -96,8 +112,6 @@ coreos:
         DHCP=yes
         DNS=10.0.3.2
         Gateway=10.0.3.2
-    - name: systemd-networkd.service
-      command: stop
     - name: systemd-networkd.service
       command: start
     - name: etcd2.service
@@ -134,12 +148,13 @@ coreos:
         Type=oneshot
         User=root
         Environment=WORKER_FQDN=<%=@hostname%>
-        ExecStart=/bin/bash -c "chmod +x /tmp/gen_worker_assets.sh"
-        ExecStart=/bin/bash -c "ADDR=$(ifconfig eth1 | grep 'inet ' | awk '{print $2}'0); /tmp/gen_worker_assets.sh ${WORKER_FQDN} $ADDR"
-        ExecStart=/bin/bash -c "cp /tmp/${WORKER_FQDN}-*.pem /etc/kubernetes/ssl/"
+        ExecStart=/bin/bash -c "chmod +x /var/tmp/gen_worker_assets.sh"
+        ExecStart=/bin/bash -c "ADDR=$(ifconfig eth1 | grep 'inet ' | awk '{print $2}'0); /var/tmp/gen_worker_assets.sh ${WORKER_FQDN} $ADDR"
+        ExecStart=/bin/bash -c "cp /var/tmp/${WORKER_FQDN}-*.pem /etc/kubernetes/ssl/"
         ExecStart=/bin/bash -c "chmod 600 /etc/kubernetes/ssl/*-key.pem && chown root:root /etc/kubernetes/ssl/*-key.pem"
         ExecStart=/bin/bash -c "cd /etc/kubernetes/ssl/ && ln -s ${WORKER_FQDN}-worker.pem worker.pem"
         ExecStart=/bin/bash -c "cd /etc/kubernetes/ssl/ && ln -s ${WORKER_FQDN}-worker-key.pem worker-key.pem"
+        ExecStart=/bin/bash -c "cd /etc/kubernetes/ssl/ && cp /var/tmp/ca.pem ."
     - name: kubelet.service
       content: |
         [Service]
@@ -150,7 +165,7 @@ coreos:
           --allow-privileged=true \
           --config=/etc/kubernetes/manifests \
           --hostname-override=${ADVERTISE_IP} \
-          --cluster-dns=${DNS_SERVICE_IP} \
+          --cluster-dns=10.0.3.2 \
           --cluster-domain=cluster.local \
           --kubeconfig=/etc/kubernetes/worker-kubeconfig.yaml \
           --tls-cert-file=/etc/kubernetes/ssl/worker.pem \

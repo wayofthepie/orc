@@ -20,6 +20,15 @@ coreos:
     command: start
   - name: systemd-networkd.service
     command: stop
+  - name: 00-eth0.network
+    runtime: true
+    content: |
+      [Match]
+      Name=eth0
+
+      [Network]
+      Gateway=10.0.3.2
+      DNS=10.0.3.2
   - name: 00-eth1.network
     runtime: true
     content: |
@@ -29,6 +38,7 @@ coreos:
       [Network]
       Address=<%=@ip%>/24
       Gateway=10.0.3.2
+      DNS=10.0.3.2
   - name: down-interfaces.service
     command: start
     content: |
