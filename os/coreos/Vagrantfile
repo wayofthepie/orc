@@ -82,6 +82,29 @@ end
 # backwards compatibility). Please don't change it unless you know what
 # you're doing.
 Vagrant.configure(2) do |config|
+
+    # FIXME: Move to a config object and yaml.
+    servers=[
+      {
+        :hostname => "host-discovery",
+        :ip => "10.0.3.2",
+        :ram => 512,
+        :cpu => 2
+      }
+    ]
+
+    servers.each do |machine|
+        #config.vm.boot_timeout = 1000
+        config.vm.define machine[:hostname] do |node|
+            node.vm.box = "centos/7"
+            node.vm.hostname = machine[:hostname]
+            node.vm.network "private_network", ip: machine[:ip], name: "vboxnet0", adapter: 2, virtualbox__intnet: "NatNetwork1"
+            node.vm.provision "file", source: File.join(File.dirname(__FILE__),"config/dnsmasq.conf"), destination: "/var/tmp/dnsmasq.conf.tmp"
+            node.vm.provision "shell", path: File.join(File.dirname(__FILE__),"config/bootstrap.sh")
+        end
+    end
+
+    # CoreOS cluster setup
     config.vm.box = "coreos-%s" % $update_channel
     if $image_version != "current"
         config.vm.box_version = $image_version
