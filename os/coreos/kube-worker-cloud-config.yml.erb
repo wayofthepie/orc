@@ -1,4 +1,72 @@
 #cloud-config
+write_files:
+  - path: "/etc/kubernetes/manifests/kube-proxy.yaml"
+    permissions: 644
+    owner: root
+    content: |
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: kube-proxy
+        namespace: kube-system
+      spec:
+        hostNetwork: true
+        containers:
+        - name: kube-proxy
+          image: gcr.io/google_containers/hyperkube:v1.1.2
+          command:
+          - /hyperkube
+          - proxy
+          - --master=https://kube-master-01.orc.com
+          - --kubeconfig=/etc/kubernetes/worker-kubeconfig.yaml
+          - --proxy-mode=iptables
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - mountPath: /etc/ssl/certs
+              name: "ssl-certs"
+            - mountPath: /etc/kubernetes/worker-kubeconfig.yaml
+              name: "kubeconfig"
+              readOnly: true
+            - mountPath: /etc/kubernetes/ssl
+              name: "etc-kube-ssl"
+              readOnly: true
+        volumes:
+          - name: "ssl-certs"
+            hostPath:
+              path: "/usr/share/ca-certificates"
+          - name: "kubeconfig"
+            hostPath:
+              path: "/etc/kubernetes/worker-kubeconfig.yaml"
+          - name: "etc-kube-ssl"
+            hostPath:
+              path: "/etc/kubernetes/ssl"
+  - path: "/etc/kubernetes/worker-kubeconfig.yaml"
+    permissions: 644
+    owner: root
+    content: |
+      apiVersion: v1
+      kind: Config
+      clusters:
+      - name: local
+        cluster:
+          certificate-authority: /etc/kubernetes/ssl/ca.pem
+      users:
+      - name: kubelet
+        user:
+          client-certificate: /etc/kubernetes/ssl/worker.pem
+          client-key: /etc/kubernetes/ssl/worker-key.pem
+      contexts:
+      - context:
+          cluster: local
+          user: kubelet
+        name: kubelet-context
+      current-context: kubelet-context
+  - path: "/etc/kubernetes/network.options"
+    permissions: 644
+    owner: root
+    content: |
+      ADVERTISE_IP=ADVERT_ADDR_TOKEN
 
 coreos:
   etcd2:
@@ -36,11 +104,60 @@ coreos:
       command: start
     - name: fleet.service
       command: start
+    - name: get-ip-for-flannel.service
+      command: start
+      content: |
+        [Unit]
+        Description=Setup flannel/kubelet options.
+        [Service]
+        Type=oneshot
+        User=root
+        ExecStart=/bin/bash -c "mkdir -p /etc/flannel/"
+        ExecStart=/bin/bash -c "echo \"FLANNELD_IFACE=$(ifconfig eth1 | grep 'inet ' | awk '{print $2}'0)\" > /etc/flannel/options.env"
+        ExecStart=/bin/bash -c "echo \"FLANNELD_ETCD_ENDPOINTS=http://0.0.0.0:2379,http://0.0.0.0:4001\" >> /etc/flannel/options.env"
+        ExecStart=/bin/bash -c "ADDR=$(ifconfig eth1 | grep 'inet ' | awk '{print $2}'0) && echo $ADDR && sed -i \"s/ADVERT_ADDR_TOKEN/$ADDR/g\" /etc/kubernetes/network.options"
+
     - name: docker.service
-        drop-ins:
-          - name: 40-flannel.conf
-            content: |
-              [Unit]
-              Requires=flanneld.service
-              After=flanneld.service
+      drop-ins:
+       - name: 40-flannel.conf
+         content: |
+           [Unit]
+           Requires=flanneld.service
+           After=flanneld.service
+    - name: get-worker-tls-assets.service
+      command: start
+      content: |
+        [Unit]
+        Description=Generate the tls assets for this worker.
+
+        [Service]
+        Type=oneshot
+        User=root
+        Environment=WORKER_FQDN=<%=@hostname%>
+        ExecStart=/bin/bash -c "chmod +x /tmp/gen_worker_assets.sh"
+        ExecStart=/bin/bash -c "ADDR=$(ifconfig eth1 | grep 'inet ' | awk '{print $2}'0); /tmp/gen_worker_assets.sh ${WORKER_FQDN} $ADDR"
+        ExecStart=/bin/bash -c "cp /tmp/${WORKER_FQDN}-*.pem /etc/kubernetes/ssl/"
+        ExecStart=/bin/bash -c "chmod 600 /etc/kubernetes/ssl/*-key.pem && chown root:root /etc/kubernetes/ssl/*-key.pem"
+        ExecStart=/bin/bash -c "cd /etc/kubernetes/ssl/ && ln -s ${WORKER_FQDN}-worker.pem worker.pem"
+        ExecStart=/bin/bash -c "cd /etc/kubernetes/ssl/ && ln -s ${WORKER_FQDN}-worker-key.pem worker-key.pem"
+    - name: kubelet.service
+      content: |
+        [Service]
+        EnvironmentFile=/etc/kubernetes/network.options
+        ExecStart=/usr/bin/kubelet \
+          --api_servers=https://kuber-master-01.orc.com \
+          --register-node=true \
+          --allow-privileged=true \
+          --config=/etc/kubernetes/manifests \
+          --hostname-override=${ADVERTISE_IP} \
+          --cluster-dns=${DNS_SERVICE_IP} \
+          --cluster-domain=cluster.local \
+          --kubeconfig=/etc/kubernetes/worker-kubeconfig.yaml \
+          --tls-cert-file=/etc/kubernetes/ssl/worker.pem \
+          --tls-private-key-file=/etc/kubernetes/ssl/worker-key.pem
+        Restart=always
+        RestartSec=10
+        [Install]
+        WantedBy=multi-user.target
+      command: start
 

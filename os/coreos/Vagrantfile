@@ -160,12 +160,27 @@ Vagrant.configure(2) do |config|
 
             ip = "10.0.3.#{i.to_i+100}"
             config.vm.hostname = vm_name
+
+            worker_node_conf.hostname = vm_name + ".orc.com"
+
             config.vm.provider :virtualbox do |vb|
                 vb.gui = vm_gui
                 vb.memory = vm_memory
                 vb.cpus = vm_cpus
 
             end
+
+            config.vm.provision :shell do |s|
+                s.inline = "mkdir -p /etc/kubernetes/ssl/"
+            end
+
+            upload_file(config, File.join(File.dirname(__FILE__), "tls/ca.pem"),'/tmp/ca.pem')
+            upload_file(config, File.join(File.dirname(__FILE__), "tls/ca-key.pem"),'/tmp/ca-key.pem')
+
+            # We need to generate the worker tls assets on each node, so copy
+            # the relevant files and scripts
+            upload_file(config, File.join(File.dirname(__FILE__), "tls/gen_worker_assets.sh"), "/tmp/gen_worker_assets.sh")
+            upload_file(config, File.join(File.dirname(__FILE__), "tls/worker-openssl.cnf"), "/tmp/worker-openssl.cnf")
 
             # Should be the subnet of the DHCP host-discovery server, outside the offer range
             # TODO: The subnet should be read from properties so we know the DHCP subnet and this match

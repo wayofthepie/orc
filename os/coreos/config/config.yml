@@ -12,7 +12,7 @@ cluster:
     mem: 1024
   kube-worker:
     prefix: kube-worker
-    nodes: 0
+    nodes: 2
     ncpu: 2
     mem: 1024
 
