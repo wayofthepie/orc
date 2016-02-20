@@ -1,4 +1,209 @@
 #cloud-config
+write_files:
+  - path: "/run/systemd/resolve/resolv.conf"
+    permissions: "0644"
+    owner: "root"
+    content: |
+      nameserver 10.0.3.2
+  - path: "/etc/kubernetes/manifests/kube-apiserver.yaml"
+    permissions: 644
+    owner: root
+    content: |
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: kube-apiserver
+        namespace: kube-system
+      spec:
+        hostNetwork: true
+        containers:
+        - name: kube-apiserver
+          image: gcr.io/google_containers/hyperkube:v1.1.2
+          command:
+          - /hyperkube
+          - apiserver
+          - --bind-address=0.0.0.0
+          - --etcd-servers=http://0.0.0.0:2379,http://0.0.0.0:4001
+          - --allow-privileged=true
+          - --service-cluster-ip-range=10.3.0.0/24
+          - --secure-port=443
+          - --advertise-address=ADVERT_ADDR_TOKEN
+          - --admission-control=NamespaceLifecycle,NamespaceExists,LimitRanger,SecurityContextDeny,ServiceAccount,ResourceQuota
+          - --tls-cert-file=/etc/kubernetes/ssl/apiserver.pem
+          - --tls-private-key-file=/etc/kubernetes/ssl/apiserver-key.pem
+          - --client-ca-file=/etc/kubernetes/ssl/ca.pem
+          - --service-account-key-file=/etc/kubernetes/ssl/apiserver-key.pem
+          ports:
+          - containerPort: 443
+            hostPort: 443
+            name: https
+          - containerPort: 8080
+            hostPort: 8080
+            name: local
+          volumeMounts:
+          - mountPath: /etc/kubernetes/ssl
+            name: ssl-certs-kubernetes
+            readOnly: true
+          - mountPath: /etc/ssl/certs
+            name: ssl-certs-host
+            readOnly: true
+        volumes:
+        - hostPath:
+            path: /etc/kubernetes/ssl
+          name: ssl-certs-kubernetes
+        - hostPath:
+            path: /usr/share/ca-certificates
+          name: ssl-certs-host
+  - path: "/etc/kubernetes/manifests/kube-proxy.yaml"
+    permissions: 644
+    owner: root
+    content: |
+      apiVersion: v1
+       kind: Pod
+       metadata:
+         name: kube-proxy
+         namespace: kube-system
+       spec:
+         hostNetwork: true
+         containers:
+         - name: kube-proxy
+           image: gcr.io/google_containers/hyperkube:v1.1.2
+           command:
+           - /hyperkube
+           - proxy
+           - --master=http://127.0.0.1:8080
+           - --proxy-mode=iptables
+           securityContext:
+             privileged: true
+           volumeMounts:
+           - mountPath: /etc/ssl/certs
+             name: ssl-certs-host
+             readOnly: true
+         volumes:
+         - hostPath:
+             path: /usr/share/ca-certificates
+           name: ssl-certs-host
+  - path: "/etc/kubernetes/manifests/kube-podmaster.yaml"
+    permissions: 644
+    owner: root
+    content: |
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: kube-podmaster
+        namespace: kube-system
+      spec:
+        hostNetwork: true
+        containers:
+        - name: scheduler-elector
+          image: gcr.io/google_containers/podmaster:1.1
+          command:
+          - /podmaster
+          - --etcd-servers=http://0.0.0.0:2379,http://0.0.0.0:4001
+          - --key=scheduler
+          - --whoami=ADVERT_ADDR_TOKEN
+          - --source-file=/src/manifests/kube-scheduler.yaml
+          - --dest-file=/dst/manifests/kube-scheduler.yaml
+          volumeMounts:
+          - mountPath: /src/manifests
+            name: manifest-src
+            readOnly: true
+          - mountPath: /dst/manifests
+            name: manifest-dst
+        - name: controller-manager-elector
+          image: gcr.io/google_containers/podmaster:1.1
+          command:
+          - /podmaster
+          - --etcd-servers=http://0.0.0.0:2379,http://0.0.0.0:4001
+          - --key=controller
+          - --whoami=ADVERT_ADDR_TOKEN
+          - --source-file=/src/manifests/kube-controller-manager.yaml
+          - --dest-file=/dst/manifests/kube-controller-manager.yaml
+          terminationMessagePath: /dev/termination-log
+          volumeMounts:
+          - mountPath: /src/manifests
+            name: manifest-src
+            readOnly: true
+          - mountPath: /dst/manifests
+            name: manifest-dst
+        volumes:
+        - hostPath:
+            path: /srv/kubernetes/manifests
+          name: manifest-src
+        - hostPath:
+            path: /etc/kubernetes/manifests
+          name: manifest-dst
+  - path: "/srv/kubernetes/manifests/kube-controller-manager.yaml"
+    permissions: 644
+    owner: root
+    content: |
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: kube-controller-manager
+        namespace: kube-system
+      spec:
+        hostNetwork: true
+        containers:
+        - name: kube-controller-manager
+          image: gcr.io/google_containers/hyperkube:v1.1.2
+          command:
+          - /hyperkube
+          - controller-manager
+          - --master=http://127.0.0.1:8080
+          - --service-account-private-key-file=/etc/kubernetes/ssl/apiserver-key.pem
+          - --root-ca-file=/etc/kubernetes/ssl/ca.pem
+          livenessProbe:
+            httpGet:
+              host: 127.0.0.1
+              path: /healthz
+              port: 10252
+            initialDelaySeconds: 15
+            timeoutSeconds: 1
+          volumeMounts:
+          - mountPath: /etc/kubernetes/ssl
+            name: ssl-certs-kubernetes
+            readOnly: true
+          - mountPath: /etc/ssl/certs
+            name: ssl-certs-host
+            readOnly: true
+        volumes:
+        - hostPath:
+            path: /etc/kubernetes/ssl
+          name: ssl-certs-kubernetes
+        - hostPath:
+            path: /usr/share/ca-certificates
+          name: ssl-certs-host
+  - path: "/srv/kubernetes/manifests/kube-scheduler.yaml"
+    permissions: 644
+    owner: root
+    content: |
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: kube-scheduler
+        namespace: kube-system
+      spec:
+        hostNetwork: true
+        containers:
+        - name: kube-scheduler
+          image: gcr.io/google_containers/hyperkube:v1.1.2
+          command:
+          - /hyperkube
+          - scheduler
+          - --master=http://127.0.0.1:8080
+          livenessProbe:
+            httpGet:
+              host: 127.0.0.1
+              path: /healthz
+              port: 10251
+            initialDelaySeconds: 15
+            timeoutSeconds: 1
+  - path: "/etc/kubernetes/network.options"
+    permissions: 644
+    owner: root
+    content: |
+      ADVERTISE_IP=ADVERT_ADDR_TOKEN
 coreos:
   etcd2:
     # use the same discovery token for the central service machines
@@ -14,8 +219,6 @@ coreos:
   fleet:
     metadata: "role=kube-master"
     etcd_servers: "http://localhost:2379"
-  flannel:
-    interface: "eth1"
   locksmith:
     endpoint: "http://localhost:2379"
   units:
@@ -41,9 +244,23 @@ coreos:
 
         [Service]
         Type=oneshot
-        ExecStart=/bin/sh -c "mkdir -p /etc/flannel/"
-        ExecStart=/usr/bin/echo "FLANNELD_IFACE=$(ifconfig eth1 | grep 'inet ' | awk '{print $2}'0)" > /etc/flannel/options.env
-        ExecStart=/usr/bin/echo "FLANNELD_ETCD_ENDPOINTS=http://0.0.0.0:2379,http://0.0.0.0:4001" >> /etc/flannel/options.env
+        User=root
+        ExecStart=/bin/bash -c "mkdir -p /etc/flannel/"
+        ExecStart=/bin/bash -c "echo \"FLANNELD_IFACE=$(ifconfig eth1 | grep 'inet ' | awk '{print $2}'0)\" > /etc/flannel/options.env"
+        ExecStart=/bin/bash -c "echo \"FLANNELD_ETCD_ENDPOINTS=http://0.0.0.0:2379,http://0.0.0.0:4001\" >> /etc/flannel/options.env"
+    - name: get-ip-for-api-server.service
+      command: start
+      content: |
+        [Unit]
+        Description=Update IP token for kube apiserver.
+
+        [Service]
+        Type=oneshot
+        User=root
+        ExecStart=/bin/bash -c "ADDR=$(ifconfig eth1 | grep 'inet ' | awk '{print $2}'0) && echo $ADDR && sed -i \"s/ADVERT_ADDR_TOKEN/$ADDR/g\" /etc/kubernetes/manifests/kube-apiserver.yaml"
+        ExecStart=/bin/bash -c "ADDR=$(ifconfig eth1 | grep 'inet ' | awk '{print $2}'0) && echo $ADDR && sed -i \"s/ADVERT_ADDR_TOKEN/$ADDR/g\" /etc/kubernetes/manifests/kube-podmaster.yaml"
+        ExecStart=/bin/bash -c "ADDR=$(ifconfig eth1 | grep 'inet ' | awk '{print $2}'0) && echo $ADDR && sed -i \"s/ADVERT_ADDR_TOKEN/$ADDR/g\" /etc/kubernetes/network.options"
+
     - name: etcd2.service
       command: start
     - name: fleet.service
@@ -62,5 +279,22 @@ coreos:
             [Unit]
             Requires=flanneld.service
             After=flanneld.service
+      command: start
+    - name: kubelet.service
+      content: |
+        [Service]
+        EnvironmentFile=/etc/kubernetes/network.options
+        ExecStart=/usr/bin/kubelet \
+          --api_servers=http://127.0.0.1:8080 \
+          --register-node=false \
+          --allow-privileged=true \
+          --config=/etc/kubernetes/manifests \
+          --hostname-override=${ADVERTISE_IP} \
+          --cluster-dns=10.0.3.2 \
+          --cluster-domain=orc.com
+        Restart=always
+        RestartSec=10
+        [Install]
+        WantedBy=multi-user.target
       command: start
 
