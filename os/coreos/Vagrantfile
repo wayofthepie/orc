@@ -162,6 +162,7 @@ Vagrant.configure(2) do |config|
             upload_file(config, File.join(File.dirname(__FILE__), "tls/ca.pem"),'/tmp/ca.pem')
             upload_file(config, File.join(File.dirname(__FILE__), "tls/apiserver.pem"),'/tmp/apiserver.pem')
             upload_file(config, File.join(File.dirname(__FILE__), "tls/apiserver-key.pem"),'/tmp/apiserver-key.pem')
+            upload_file(config, File.join(File.dirname(__FILE__), "config/register-namespace.sh"),'/tmp/register-namespace.sh')
 
             config.vm.provision :shell do |s|
                s.inline = "cp /tmp/*.pem /etc/kubernetes/ssl/ && chmod 600 /etc/kubernetes/ssl/*-key.pem && chown root:root /etc/kubernetes/ssl/*-key.pem"

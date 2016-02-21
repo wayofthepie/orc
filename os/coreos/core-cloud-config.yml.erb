@@ -1,6 +1,10 @@
 #cloud-config
-
----
+write_files:
+  - path: "/run/systemd/resolve/resolv.conf"
+    permissions: "0644"
+    owner: "root"
+    content: |
+      nameserver 10.0.3.2
 coreos:
   etcd2:
     advertise-client-urls: http://<%=@ip%>:2379
@@ -48,27 +52,4 @@ coreos:
       ExecStart=/usr/bin/ip addr flush dev eth1
   - name: systemd-networkd.service
     command: start
-  - name: flanneld.service
-    drop-ins:
-    - name: 50-network-config.conf
-      content: |
-        [Service]
-        ExecStartPre=/usr/bin/etcdctl set /coreos.com/network/config '{ "Network": "10.1.0.0/16" }'
-      command: start
-  - name: redis.service
-    content: |
-      [Unit]
-      Requires=flanneld.service
-      After=flanneld.service
-
-      [Service]
-      ExecStart=/usr/bin/docker run redis
-      Restart=always
-    command: start
-  write_files:
-    - path: "/run/systemd/resolve/resolv.conf"
-      permissions: "0644"
-      owner: "root"
-      content: |
-        nameserver 10.0.3.2
 

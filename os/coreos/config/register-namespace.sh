@@ -13,26 +13,28 @@ function command {
 }
 
 function retry_or_exit {
+    local retries=$1
 
     command
-    if [ $? -eq 7 ]; then
-        if [ ${RETRIES} -lt 0 ]; then
+    ret=$?
+
+    if [ ${ret} -eq 7 ]; then
+        if [ ${retries} -lt 0 ]; then
             echo "Out of retries. Failed to register kube-system namespace."
             exit 1
         else
-            echo "Waiting for 10 seconds to retry. ${RETRIES} retries left."
-            let RETRIES-=1
+            echo "Waiting for 10 seconds to retry. ${retries} retries left."
             sleep 10
-            retry_or_exit
+            retry_or_exit $((retries-1))
         fi
-    elif [ $? -eq 0 ]; then
+    elif [ ${ret} -eq 0 ]; then
         echo "Successfully registered the kubesystem namespace."
         exit 0
     else
-        echo "Could not register kube-system namespace. Error code $?"
+        echo "Could not register kube-system namespace. Error code ${ret}"
         exit 1
     fi
 
 }
 
-retry_or_exit
+retry_or_exit ${RETRIES}

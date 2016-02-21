@@ -160,7 +160,7 @@ coreos:
         [Service]
         EnvironmentFile=/etc/kubernetes/network.options
         ExecStart=/usr/bin/kubelet \
-          --api_servers=https://kuber-master-01.orc.com \
+          --api_servers=https://kube-master-01.orc.com \
           --register-node=true \
           --allow-privileged=true \
           --config=/etc/kubernetes/manifests \

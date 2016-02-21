@@ -275,21 +275,26 @@ coreos:
     - name: fleet.service
       command: start
     - name : flanneld.service
+      command: start
       drop-ins:
         - name: 40-ExecStartPre-symlink.conf
           content: |
             [Service]
             ExecStartPre=/usr/bin/ln -sf /etc/flannel/options.env /run/flannel/options.env
-      command: start
+        - name: 50-network-config.conf
+          content: |
+            [Service]
+            ExecStartPre=/usr/bin/etcdctl set /coreos.com/network/config '{ "Network": "10.2.0.0/16" }'
     - name: docker.service
+      command: start
       drop-ins:
         - name: 40-flannel.conf
           content: |
             [Unit]
             Requires=flanneld.service
             After=flanneld.service
-      command: start
     - name: kubelet.service
+      command: start
       content: |
         [Service]
         EnvironmentFile=/etc/kubernetes/network.options
@@ -305,16 +310,16 @@ coreos:
         RestartSec=10
         [Install]
         WantedBy=multi-user.target
-      command: start
     - name: register-namespace.service
-       command: start
+      command: start
       content: |
         [Unit]
+        Requires=kubelet.service
+        After=kubelet.service
         Description=Add the kube-system namespace.
 
         [Service]
         Type=oneshot
         User=root
-        ExecStart=/bin/bash -c "curl --retry=10 -XPOST -d'{\"apiVersion\":\"v1\",\"kind\":\"Namespace\",\"metadata\":{\"name\":\"kube-system\"}}' \"http://127.0.0.1:8080/api/v1/namespaces\""
-
+        ExecStart=/bin/bash -c "chmod +x /tmp/register-namespace.sh && /tmp/register-namespace.sh"
 
