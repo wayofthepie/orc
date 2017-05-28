@@ -1,0 +1,178 @@
+#cloud-config
+write_files:
+  - path: "/run/systemd/resolve/resolv.conf"
+    permissions: "0644"
+    owner: "root"
+    content: |
+      nameserver 10.0.3.2
+  - path: "/etc/kubernetes/manifests/kube-proxy.yaml"
+    permissions: 644
+    owner: root
+    content: |
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: kube-proxy
+        namespace: kube-system
+      spec:
+        hostNetwork: true
+        containers:
+        - name: kube-proxy
+          image: gcr.io/google_containers/hyperkube:v1.1.2
+          command:
+          - /hyperkube
+          - proxy
+          - --master=https://kube-master-01.orc.com
+          - --kubeconfig=/etc/kubernetes/worker-kubeconfig.yaml
+          - --proxy-mode=iptables
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - mountPath: /etc/ssl/certs
+              name: "ssl-certs"
+            - mountPath: /etc/kubernetes/worker-kubeconfig.yaml
+              name: "kubeconfig"
+              readOnly: true
+            - mountPath: /etc/kubernetes/ssl
+              name: "etc-kube-ssl"
+              readOnly: true
+        volumes:
+          - name: "ssl-certs"
+            hostPath:
+              path: "/usr/share/ca-certificates"
+          - name: "kubeconfig"
+            hostPath:
+              path: "/etc/kubernetes/worker-kubeconfig.yaml"
+          - name: "etc-kube-ssl"
+            hostPath:
+              path: "/etc/kubernetes/ssl"
+  - path: "/etc/kubernetes/worker-kubeconfig.yaml"
+    permissions: 644
+    owner: root
+    content: |
+      apiVersion: v1
+      kind: Config
+      clusters:
+      - name: local
+        cluster:
+          certificate-authority: /etc/kubernetes/ssl/ca.pem
+      users:
+      - name: kubelet
+        user:
+          client-certificate: /etc/kubernetes/ssl/worker.pem
+          client-key: /etc/kubernetes/ssl/worker-key.pem
+      contexts:
+      - context:
+          cluster: local
+          user: kubelet
+        name: kubelet-context
+      current-context: kubelet-context
+  - path: "/etc/kubernetes/network.options"
+    permissions: 644
+    owner: root
+    content: |
+      ADVERTISE_IP=ADVERT_ADDR_TOKEN
+
+coreos:
+  etcd2:
+    # use the same discovery token for the central service machines
+    # make sure you have used the discovery token to bootstrap the
+    # central service successfully
+    # this etcd will fallback to proxy automatically
+    discovery: <%=@disco_url%>
+    # listen on both the official ports and the legacy ports
+    # legacy ports can be omitted if your application doesn't depend on them
+    listen-client-urls: http://0.0.0.0:2379,http://0.0.0.0:4001
+    #  flannel:
+#    interface: "eth1"
+  fleet:
+    metadata: "role=kube-worker"
+    etcd_servers: "http://localhost:2379"
+  locksmith:
+    endpoint: "http://localhost:2379"
+  units:
+    - name: systemd-networkd.service
+      command: stop
+    - name: 00-eth0.network
+      runtime: true
+      content: |
+        [Match]
+        Name=eth0
+
+        [Network]
+        Gateway=10.0.3.2
+        DNS=10.0.3.2
+    - name: 00-eth1.network
+      runtime: true
+      content: |
+        [Match]
+        Name=eth1
+
+        [Network]
+        DHCP=yes
+        DNS=10.0.3.2
+        Gateway=10.0.3.2
+    - name: systemd-networkd.service
+      command: start
+    - name: etcd2.service
+      command: start
+    - name: fleet.service
+      command: start
+    - name: get-ip-for-flannel.service
+      command: start
+      content: |
+        [Unit]
+        Description=Setup flannel/kubelet options.
+        [Service]
+        Type=oneshot
+        User=root
+        ExecStart=/bin/bash -c "mkdir -p /etc/flannel/"
+        ExecStart=/bin/bash -c "echo \"FLANNELD_IFACE=$(ifconfig eth1 | grep 'inet ' | awk '{print $2}'0)\" > /etc/flannel/options.env"
+        ExecStart=/bin/bash -c "echo \"FLANNELD_ETCD_ENDPOINTS=http://0.0.0.0:2379,http://0.0.0.0:4001\" >> /etc/flannel/options.env"
+        ExecStart=/bin/bash -c "ADDR=$(ifconfig eth1 | grep 'inet ' | awk '{print $2}'0) && echo $ADDR && sed -i \"s/ADVERT_ADDR_TOKEN/$ADDR/g\" /etc/kubernetes/network.options"
+
+    - name: docker.service
+      drop-ins:
+       - name: 40-flannel.conf
+         content: |
+           [Unit]
+           Requires=flanneld.service
+           After=flanneld.service
+    - name: get-worker-tls-assets.service
+      command: start
+      content: |
+        [Unit]
+        Description=Generate the tls assets for this worker.
+
+        [Service]
+        Type=oneshot
+        User=root
+        Environment=WORKER_FQDN=<%=@hostname%>
+        ExecStart=/bin/bash -c "chmod +x /var/tmp/gen_worker_assets.sh"
+        ExecStart=/bin/bash -c "ADDR=$(ifconfig eth1 | grep 'inet ' | awk '{print $2}'0); /var/tmp/gen_worker_assets.sh ${WORKER_FQDN} $ADDR"
+        ExecStart=/bin/bash -c "cp /var/tmp/${WORKER_FQDN}-*.pem /etc/kubernetes/ssl/"
+        ExecStart=/bin/bash -c "chmod 600 /etc/kubernetes/ssl/*-key.pem && chown root:root /etc/kubernetes/ssl/*-key.pem"
+        ExecStart=/bin/bash -c "cd /etc/kubernetes/ssl/ && ln -s ${WORKER_FQDN}-worker.pem worker.pem"
+        ExecStart=/bin/bash -c "cd /etc/kubernetes/ssl/ && ln -s ${WORKER_FQDN}-worker-key.pem worker-key.pem"
+        ExecStart=/bin/bash -c "cd /etc/kubernetes/ssl/ && cp /var/tmp/ca.pem ."
+    - name: kubelet.service
+      content: |
+        [Service]
+        EnvironmentFile=/etc/kubernetes/network.options
+        ExecStart=/usr/bin/kubelet \
+          --api_servers=https://kube-master-01.orc.com \
+          --register-node=true \
+          --allow-privileged=true \
+          --config=/etc/kubernetes/manifests \
+          --hostname-override=${ADVERTISE_IP} \
+          --cluster-dns=10.0.3.2 \
+          --cluster-domain=cluster.local \
+          --kubeconfig=/etc/kubernetes/worker-kubeconfig.yaml \
+          --tls-cert-file=/etc/kubernetes/ssl/worker.pem \
+          --tls-private-key-file=/etc/kubernetes/ssl/worker-key.pem
+        Restart=always
+        RestartSec=10
+        [Install]
+        WantedBy=multi-user.target
+      command: start
+

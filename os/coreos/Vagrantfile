@@ -24,9 +24,10 @@ $forwarded_ports = {}
 $work_dir="."
 
 
-CORE_CLOUD_CONFIG_PATH = File.join(File.dirname(__FILE__), "core-cloud-config.yml.erb")
-WORK_CLOUD_CONFIG_PATH = File.join(File.dirname(__FILE__), "work-cloud-config.yml.erb")
-CONFIG = File.join(File.dirname(__FILE__), "config.rb")
+CORE_SERVICES_CLOUD_CONFIG_PATH = File.join(File.dirname(__FILE__), "core-cloud-config.yml.erb")
+KUBE_MASTER_CLOUD_CONFIG_PATH = File.join(File.dirname(__FILE__), "kube-master-cloud-config.yml.erb")
+KUBE_WORKER_CLOUD_CONFIG_PATH = File.join(File.dirname(__FILE__), "kube-worker-cloud-config.yml.erb")
+CONFIG = File.join(File.dirname(__FILE__), "config/config.rb")
 
 if File.exist?(CONFIG)
     require CONFIG
@@ -44,41 +45,66 @@ def vm_cpus
       $vb_cpus.nil? ? $vm_cpus : $vb_cpus
 end
 
-def create_config_and_upload(config, template, conf_file, ip, new_disco_url)
-    if File.exist?(template)
-        ccb = CloudConfigBindings.new(ip, new_disco_url)
-        template = ERB.new File.new(template).read, nil, "%"
-        res = template.result(ccb.get_binding)
-        config.vm.provision :file do |file|
-            File.write(conf_file, res)
-            file.source      = conf_file
-            file.destination = '/tmp/vagrantfile-user-data'
-        end
-        config.vm.provision :shell, :inline => "cp /tmp/vagrantfile-user-data /var/lib/coreos-vagrant/", :privileged => true
-    end
-end
+srand(5)
+rand = Random.new(1)
 
 def build_config_and_upload(config, template, bindings_spec)
-
-    conf_file=Tempfile.new("cloud-config", $work_dir)
-
+    # Crazy lengths just to get temp files to work....
+    num = rand(10000)
+    puts num
+    conf_file="cloud-config#{num}"
     if File.exist?(template)
         erb_template = ERB.new File.new(template).read, nil, "%"
-        actual = bindings_spec.get_binding
+        actual = erb_template.result(bindings_spec.get_binding)
+
+        File.open(conf_file, 'w') { |file| file.write(actual) }
+
         config.vm.provision :file do |file|
-            conf_file.write(actual)
             file.source      = conf_file
             file.destination = '/tmp/vagrantfile-user-data'
         end
         config.vm.provision :shell, :inline => "cp /tmp/vagrantfile-user-data /var/lib/coreos-vagrant/", :privileged => true
     end
 end
+
+def upload_file(config,src,dst)
+    config.vm.provision :file do |file|
+        file.source      = src
+        file.destination = dst
+    end
+end
+
+
+
 
 # All Vagrant configuration is done below. The "2" in Vagrant.configure
 # configures the configuration version (we support older styles for
 # backwards compatibility). Please don't change it unless you know what
 # you're doing.
 Vagrant.configure(2) do |config|
+
+    # FIXME: Move to a config object and yaml.
+    servers=[
+      {
+        :hostname => "host-discovery",
+        :ip => "10.0.3.2",
+        :ram => 512,
+        :cpu => 2
+      }
+    ]
+
+    servers.each do |machine|
+        #config.vm.boot_timeout = 1000
+        config.vm.define machine[:hostname] do |node|
+            node.vm.box = "centos/7"
+            node.vm.hostname = machine[:hostname]
+            node.vm.network "private_network", ip: machine[:ip], name: "vboxnet0", adapter: 2, virtualbox__intnet: "NatNetwork1"
+            node.vm.provision "file", source: File.join(File.dirname(__FILE__),"config/dnsmasq.conf"), destination: "/var/tmp/dnsmasq.conf.tmp"
+            node.vm.provision "shell", path: File.join(File.dirname(__FILE__),"config/bootstrap.sh")
+        end
+    end
+
+    # CoreOS cluster setup
     config.vm.box = "coreos-%s" % $update_channel
     if $image_version != "current"
         config.vm.box_version = $image_version
@@ -93,43 +119,99 @@ Vagrant.configure(2) do |config|
     end
 
     # Initialize the core cluster
-    (1..$num_core_cluster).each do |i|
-        config.vm.define vm_name = "%s-%02d" % [$core_name_prefix, i] do |config|
+    (1..CoreServicesNodeConfig::NUM_NODES).each do |i|
+        node_conf = CoreServicesNodeConfig.new
+        node_conf.ip = "10.0.3.#{i.to_i+10}"
+        config.vm.define vm_name = "%s-%02d" % [node_conf.name_prefix, i] do |config|
 
-            ip = "10.0.3.#{i.to_i+10}"
             config.vm.hostname = vm_name
+            config.vm.provider :virtualbox do |vb|
+                vb.gui = vm_gui
+                vb.memory = vm_memory
+                vb.cpus = vm_cpus
+            end
+            # Should be the subnet of the DHCP host-discovery server, outside the offer range
+            # TODO: The subnet should be read from properties so we know the DHCP subnet and this match
+            # Even though auto_config is off we still have to set an ip or vagrant will fail.
+            config.vm.network :private_network, type: "static", ip: node_conf.ip, virtualbox__intnet: "NatNetwork1", auto_config: false
+            build_config_and_upload(config, CORE_SERVICES_CLOUD_CONFIG_PATH, node_conf)
+        end
+    end
+
+
+    # Initialize the kube masters
+    (1..KubeMasterNodeConfig::NUM_NODES).each do |i|
+        master_node_conf = KubeMasterNodeConfig.new
+        config.vm.define vm_name = "%s-%02d" % [master_node_conf.name_prefix, i] do |config|
+
+            ip = "10.0.3.#{i.to_i+100}"
+
+            config.vm.hostname = vm_name
+
+            master_node_conf.hostname = vm_name + ".orc.com"
+
+            config.vm.provider :virtualbox do |vb|
+                vb.gui = vm_gui
+                vb.memory = vm_memory
+                vb.cpus = vm_cpus
+            end
+            config.vm.provision :shell do |s|
+                s.inline = "mkdir -p /etc/kubernetes/ssl/"
+            end
+
+            upload_file(config, File.join(File.dirname(__FILE__), "tls/ca.pem"),'/tmp/ca.pem')
+            upload_file(config, File.join(File.dirname(__FILE__), "tls/apiserver.pem"),'/tmp/apiserver.pem')
+            upload_file(config, File.join(File.dirname(__FILE__), "tls/apiserver-key.pem"),'/tmp/apiserver-key.pem')
+            upload_file(config, File.join(File.dirname(__FILE__), "config/register-namespace.sh"),'/tmp/register-namespace.sh')
+
+            config.vm.provision :shell do |s|
+               s.inline = "cp /tmp/*.pem /etc/kubernetes/ssl/ && chmod 600 /etc/kubernetes/ssl/*-key.pem && chown root:root /etc/kubernetes/ssl/*-key.pem"
+            end
+
+
+            # Workers use DHCP, but vagrant enforces setting an IP on an interface at config time
+            # so set an IP in the DHCP offer range to avoid conflicts with the static IP's for the
+            # core cluster while the workes are starting
+            config.vm.network :private_network,  ip: ip, virtualbox__intnet: "NatNetwork1", auto_config: false
+            build_config_and_upload(config, KUBE_MASTER_CLOUD_CONFIG_PATH, master_node_conf)
+       end
+    end
+
+    # Initialize the kube workers
+    (1..KubeWorkerNodeConfig::NUM_NODES).each do |i|
+        worker_node_conf = KubeWorkerNodeConfig.new
+        config.vm.define vm_name = "%s-%02d" % [worker_node_conf.name_prefix, i] do |config|
+
+            ip = "10.0.3.#{i.to_i+100}"
+            config.vm.hostname = vm_name
+
+            worker_node_conf.hostname = vm_name + ".orc.com"
+
             config.vm.provider :virtualbox do |vb|
                 vb.gui = vm_gui
                 vb.memory = vm_memory
                 vb.cpus = vm_cpus
 
             end
+
+            config.vm.provision :shell do |s|
+                s.inline = "mkdir -p /etc/kubernetes/ssl/"
+            end
+
+            upload_file(config, File.join(File.dirname(__FILE__), "tls/ca.pem"),'/var/tmp/ca.pem')
+            upload_file(config, File.join(File.dirname(__FILE__), "tls/ca-key.pem"),'/var/tmp/ca-key.pem')
+
+            # We need to generate the worker tls assets on each node, so copy
+            # the relevant files and scripts
+            upload_file(config, File.join(File.dirname(__FILE__), "tls/gen_worker_assets.sh"), "/var/tmp/gen_worker_assets.sh")
+            upload_file(config, File.join(File.dirname(__FILE__), "tls/worker-openssl.cnf"), "/var/tmp/worker-openssl.cnf")
 
             # Should be the subnet of the DHCP host-discovery server, outside the offer range
             # TODO: The subnet should be read from properties so we know the DHCP subnet and this match
             # Even though auto_config is off we still have to set an ip or vagrant will fail.
             config.vm.network :private_network, type: "static", ip: ip, virtualbox__intnet: "NatNetwork1", auto_config: false
-            build_config_and_upload(config, CORE_CLOUD_CONFIG_PATH,  CloudConfigBindings.new(ip, $new_disco_url))
+            build_config_and_upload(config, KUBE_WORKER_CLOUD_CONFIG_PATH,  worker_node_conf)
         end
-    end
-
-    # Initialize the kube cluster
-    (1..$num_work_cluster).each do |i|
-        config.vm.define vm_name = "%s-%02d" % [$worker_name_prefix, i] do |config|
-
-            ip = "10.0.3.#{i.to_i+100}"
-            config.vm.hostname = vm_name
-            config.vm.provider :virtualbox do |vb|
-                vb.gui = vm_gui
-                vb.memory = vm_memory
-                vb.cpus = vm_cpus
-            end
-            # Workers use DHCP, but vagrant enforces setting an IP on an interface at config time
-            # so set an IP in the DHCP offer range to avoid conflicts with the static IP's for the
-            # core cluster while the workes are starting
-            config.vm.network :private_network,  ip: ip, virtualbox__intnet: "NatNetwork1", auto_config: false
-            create_config_and_upload(config, WORK_CLOUD_CONFIG_PATH, ".work/" + "wcc#{i}", nil, $new_disco_url)
-       end
     end
 end
 
